@@ -45,6 +45,12 @@ st.markdown("""
         background-color: #e53e3e !important;
         color: white !important;
     }
+    .camera-feed {
+        border-radius: 10px;
+        border: 2px solid #3182ce;
+        padding: 10px;
+        background: #f0f4f8;
+    }
 </style>
 """, unsafe_allow_html=True)
 
@@ -59,6 +65,8 @@ if 'emergency_active' not in st.session_state:
     st.session_state.emergency_active = False
 if 'current_mode' not in st.session_state:
     st.session_state.current_mode = "AI Adaptive"
+if 'esp32_cam_url' not in st.session_state:
+    st.session_state.esp32_cam_url = "http://10.85.222.56/"
 
 def load_config():
     """Load configuration from JSON file"""
@@ -74,7 +82,8 @@ def load_config():
                 "east": "camera_east.mp4",
                 "west": "camera_west.mp4"
             },
-            "detection_confidence": 0.5
+            "detection_confidence": 0.5,
+            "esp32_cam_url": "http://10.85.222.56/"
         }
 
 def simulate_vehicle_detection():
@@ -112,8 +121,29 @@ def update_traffic_history(vehicle_counts):
     if len(st.session_state.traffic_history) > 50:
         st.session_state.traffic_history = st.session_state.traffic_history[-50:]
 
+def display_esp32_cam_feed():
+    """Display ESP32-CAM live stream"""
+    try:
+        st.markdown(f"""
+        <div class="camera-feed">
+            <h3 style="color: #3182ce; margin-bottom: 1rem;">📹 ESP32-CAM Live Stream</h3>
+            <img src="{st.session_state.esp32_cam_url}" width="100%" 
+                 style="border-radius: 8px; margin-bottom: 1rem;" 
+                 onerror="this.style.display='none'; document.getElementById('cam-error').style.display='block';">
+            <div id="cam-error" style="display: none; color: #e53e3e; text-align: center;">
+                ⚠️ Camera feed unavailable. Please check ESP32-CAM connection.
+            </div>
+        </div>
+        """, unsafe_allow_html=True)
+    except Exception as e:
+        st.error(f"Error displaying camera feed: {str(e)}")
+
 def main():
     config = load_config()
+    
+    # Update ESP32-CAM URL from config if available
+    if 'esp32_cam_url' in config:
+        st.session_state.esp32_cam_url = config['esp32_cam_url']
     
     # Header
     st.markdown(f"""
@@ -153,7 +183,15 @@ def main():
             st.warning("⚠️ Manual mode active - AI algorithms disabled")
             north_south_time = st.slider("North-South Green Time (s)", 15, 60, 30)
             east_west_time = st.slider("East-West Green Time (s)", 15, 60, 30)
-            
+        
+        # ESP32-CAM Settings
+        st.subheader("📡 ESP32-CAM Settings")
+        st.session_state.esp32_cam_url = st.text_input(
+            "ESP32-CAM Stream URL", 
+            st.session_state.esp32_cam_url,
+            help="Enter the URL for your ESP32-CAM live stream"
+        )
+        
         # Emergency Controls
         st.subheader("🚨 Emergency Controls")
         
@@ -212,44 +250,20 @@ def main():
         delta_sign = "+" if eff_delta >= 0 else ""
         st.metric("AI Efficiency", f"{efficiency}%", delta=f"{delta_sign}{eff_delta}%")
 
-    # Live Traffic Monitoring
+    # Live Traffic Monitoring with ESP32-CAM
     st.subheader(f"📹 Live Traffic Monitoring - {config['intersection_name']}")
     
-    col_main, col_signals = st.columns([3, 1])
+    # Create layout with camera feed and traffic data
+    cam_col, data_col = st.columns([2, 1])
     
-    with col_main:
-        # Camera feeds placeholder
-        st.info("🎥 Live camera feeds - AI processing in real-time")
+    with cam_col:
+        # ESP32-CAM Live Stream
+        display_esp32_cam_feed()
         
-        # Vehicle count display
-        subcol1, subcol2, subcol3, subcol4 = st.columns(4)
+        # Additional camera information
+        st.info(f"📡 Connected to: {st.session_state.esp32_cam_url}")
         
-        directions = ['north', 'south', 'east', 'west']
-        direction_icons = ['⬆️', '⬇️', '➡️', '⬅️']
-        direction_names = ['North', 'South', 'East', 'West']
-        
-        for i, (direction, icon, name) in enumerate(zip(directions, direction_icons, direction_names)):
-            with [subcol1, subcol2, subcol3, subcol4][i]:
-                count = vehicle_counts[direction]
-                
-                # Color coding based on density
-                if count < 8:
-                    density_color = "🟢"
-                    density = "Low"
-                elif count < 15:
-                    density_color = "🟡" 
-                    density = "Medium"
-                else:
-                    density_color = "🔴"
-                    density = "High"
-                
-                st.metric(
-                    f"{density_color} {icon} {name} Lane", 
-                    count,
-                    delta=f"{density} density"
-                )
-    
-    with col_signals:
+    with data_col:
         st.subheader("🚦 Signal Status")
         
         # Calculate adaptive timing
@@ -283,9 +297,43 @@ def main():
         st.success("✅ Adaptive Control: Active") 
         st.info(f"🧠 Confidence: {confidence_threshold*100:.1f}%")
         st.info(f"🔄 Processing: {np.random.randint(28, 35)} FPS")
+        
+        # Vehicle counts by direction
+        st.subheader("🚗 Vehicle Counts")
+        for direction, count in vehicle_counts.items():
+            st.write(f"**{direction.title()}**: {count} vehicles")
+
+    # Vehicle count display in a separate section
+    st.subheader("📊 Lane-specific Vehicle Counts")
+    subcol1, subcol2, subcol3, subcol4 = st.columns(4)
+    
+    directions = ['north', 'south', 'east', 'west']
+    direction_icons = ['⬆️', '⬇️', '➡️', '⬅️']
+    direction_names = ['North', 'South', 'East', 'West']
+    
+    for i, (direction, icon, name) in enumerate(zip(directions, direction_icons, direction_names)):
+        with [subcol1, subcol2, subcol3, subcol4][i]:
+            count = vehicle_counts[direction]
+            
+            # Color coding based on density
+            if count < 8:
+                density_color = "🟢"
+                density = "Low"
+            elif count < 15:
+                density_color = "🟡" 
+                density = "Medium"
+            else:
+                density_color = "🔴"
+                density = "High"
+            
+            st.metric(
+                f"{density_color} {icon} {name} Lane", 
+                count,
+                delta=f"{density} density"
+            )
 
     # Analytics Dashboard
-    st.subheader("📊 Real-time Analytics & Performance")
+    st.subheader("📈 Real-time Analytics & Performance")
     
     # Charts
     chart_col1, chart_col2 = st.columns(2)
@@ -360,6 +408,7 @@ def main():
             - Edge Computing Device (Raspberry Pi 4+ or Intel NUC)
             - Traffic Signal Controllers (with API/RS485 interface)
             - Network Switch and UPS backup
+            - ESP32-CAM for additional monitoring
             
             **Camera Placement:**
             - Mount cameras 15-20 feet high for optimal detection
@@ -371,15 +420,15 @@ def main():
         with tab2:
             st.markdown("""
             **Software Configuration:**
-            ```
-            # Update camera sources in config.json
+            ```json
             {
                 "camera_sources": {
                     "north": "rtsp://camera1_ip/stream",
                     "south": "rtsp://camera2_ip/stream", 
                     "east": "rtsp://camera3_ip/stream",
                     "west": "rtsp://camera4_ip/stream"
-                }
+                },
+                "esp32_cam_url": "http://10.85.222.56/"
             }
             ```
             
@@ -394,7 +443,7 @@ def main():
             **Deployment Options:**
             
             1. **Local Edge Device:**
-               ```
+               ```bash
                pip install -r requirements.txt
                streamlit run streamlit_app.py --server.port 8501
                ```
